@@ -376,7 +376,7 @@ def process_file(url: str, geotiff_filename: str,
                 ground_xy = np.column_stack([x_g, y_g])
                 kd_tree = cKDTree(ground_xy)
 
-                # ---- Query nearest neighbour for every grid cell ----
+                # ---- Query nearest neighbor for every grid cell ----
                 # grid_xx and grid_yy are the meshgrid arrays from Stage 6.
                 # workers=-1 uses all available CPU cores for the query.
                 grid_coords = np.column_stack([grid_xx.ravel(), grid_yy.ravel()])
