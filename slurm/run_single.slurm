@@ -21,7 +21,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --mail-user=thq3hn@virginia.edu
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-type=END
@@ -44,8 +44,10 @@ module load miniforge/24.3.0-py3.11
 module load gcc/11.4.0
 module load openmpi/4.1.4
 module load gdal/3.6.3
+module load awscli
 
 pip install rasterio proj tqdm
+pip install awscli boto3
 pip install "laspy[laszip]"
 
 echo "  Python: $(which python)"
@@ -66,12 +68,19 @@ echo "Python:        $(which python)"
 #echo "CUDA version:  $(python -c 'import torch; print(torch.version.cuda)')"
 echo "============================================"
 
+export AWS_PROFILE=tree-canopy
+
 # ---- Run Experiment ----
 #python ~/$SELECTED_USER_ENV/DS6050_G12_PROJECT/scripts/train_models.py --config $CONFIG_FILE
 #python ~/$SELECTED_USER_ENV/scripts/process_lidar_tiles.py --csv /home/thq3hn/development/DS6015-006/data/CentralVA_LiDAR_SelectedTiles-AlbemarleCounty.csv --workers 9
 #python ~/$SELECTED_USER_ENV/scripts/process_lidar_tiles.py --csv /home/thq3hn/development/DS6015-006/data/CentralVA_LiDAR_SelectedTiles-AlbemarleCounty-100.csv --workers 9
 #python ~/$SELECTED_USER_ENV/scripts/process_lidar_tiles.py --csv /home/thq3hn/development/DS6015-006/data/CentralVA_LiDAR_SelectedTiles-AlbemarleCounty-200.csv --workers 9
-python ~/$SELECTED_USER_ENV/scripts/process_lidar_tiles.py --csv /home/thq3hn/development/DS6015-006/data/CentralVA_LiDAR_SelectedTiles-AlbemarleCounty-300.csv --workers 9
+#python ~/$SELECTED_USER_ENV/scripts/process_lidar_tiles.py --csv /home/thq3hn/development/DS6015-006/data/CentralVA_LiDAR_SelectedTiles-AlbemarleCounty-300.csv --workers 9
+#python ~/$SELECTED_USER_ENV/scripts/process_lidar_tiles-with-S3.py --csv /home/thq3hn/development/DS6015-006/data/CentralVA_LiDAR_SelectedTiles-AlbemarleCounty-100.csv --workers 9 --s3-upload
+#python ~/$SELECTED_USER_ENV/scripts/process_lidar_tiles-with-S3.py --csv /home/thq3hn/development/DS6015-006/data/CentralVA_LiDAR_SelectedTiles-AlbemarleCounty.csv --year 2014 --workers 9 --s3-upload
+#python ~/$SELECTED_USER_ENV/scripts/process_lidar_tiles-with-S3.py --csv /home/thq3hn/development/DS6015-006/data/CentralVA_LiDAR_SelectedTiles-AlbemarleCounty.csv --year 2014 --workers 9 --s3-upload
+python ~/$SELECTED_USER_ENV/scripts/process_lidar_tiles-with-S3.py --csv /home/thq3hn/development/DS6015-006/data/CentralVA_LiDAR_SelectedTiles-AC_Group3.csv --year 2014 --workers 9 --s3-upload
+#python ~/$SELECTED_USER_ENV/scripts/process_lidar_tiles-with-S3-IDW.py --csv /home/thq3hn/development/DS6015-006/data/CentralVA_LiDAR_SelectedTiles-AlbemarleCounty.csv --year 2014 --workers 12 --s3-upload
 
 EXIT_CODE=$?
 echo "============================================"

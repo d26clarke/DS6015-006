@@ -47,6 +47,8 @@ from scipy.interpolate import griddata
 from scipy.ndimage import maximum_filter
 from scipy.spatial import cKDTree
 
+import s3_utils
+
 # ── Try importing tqdm; fall back to a no-op wrapper if not installed ──────────
 try:
     from tqdm import tqdm
@@ -62,11 +64,11 @@ RASTER_RESOLUTION    = 1.0    # Output raster cell size in meters
 DEFAULT_WORKERS      = max(1, os.cpu_count() - 2)  # Leave 2 cores for OS
 
 GEOTIFF_OUTPUT_DIR   = Path("")
-CENTROID_OUTPUT_DIR  = Path("../data/outputs/centroids/")
-SKIP_LOG_PATH        = Path("../data/outputs/skipped_tiles.csv")
-UNCLASS_LOG_PATH     = Path("../logs/unclassified_tiles.log")
+CENTROID_OUTPUT_DIR  = Path("")
+SKIP_LOG_PATH        = Path("/home/thq3hn/development/DS6015-006/data/outputs/skipped_tiles.csv")
+UNCLASS_LOG_PATH     = Path("/home/thq3hn/development/DS6015-006/logs/unclassified_tiles.log")
 COMBINED_CENTROID    = Path("")
-RUN_SUMMARY_PATH     = Path("../data/outputs/run_summary.txt")
+RUN_SUMMARY_PATH     = Path("/home/thq3hn/development/DS6015-006/data/outputs/run_summary.txt")
 
 # ── Logging Setup ──────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -119,12 +121,6 @@ def load_tile_list(csv_path: str,
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         for row in reader:
-
-            # Year_filter
-            if year_filter:
-                proj_year = row.get("ProjectYea", row.get("PROJECTYEA", ""))
-                if year_filter not in str(proj_year):
-                    continue
 
             # Optional: filter to a specific county
             if county_filter:
@@ -202,7 +198,8 @@ def _log_skipped(url: str, filename: str, reason: str,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def process_file(url: str, geotiff_filename: str,
-                 retries: int = 3, timeout: int = 120) -> dict:
+                 retries: int = 3, timeout: int = 120,
+                 s3_bucket: str = None, county: str = "unknown", year: str = "unknown") -> dict:
     """
     Download, decompress, and process a single VGIN LAZ tile.
 
@@ -481,6 +478,15 @@ def process_file(url: str, geotiff_filename: str,
                                      round(float(ey), 3),
                                      round(float(eh), 2)])
             t_csv = time.perf_counter() - t0
+            
+            # ── Stage 13: S3 Upload (Optional) ────────────────────────────────
+            if s3_bucket:
+                s3_client = s3_utils.get_s3_client()
+                if s3_client:
+                    chm_key = s3_utils.build_s3_key("chm", county, year, geotiff_path.name)
+                    csv_key = s3_utils.build_s3_key("centroids", county, year, centroid_path.name)
+                    s3_utils.upload_file(s3_client, geotiff_path, s3_bucket, chm_key)
+                    s3_utils.upload_file(s3_client, centroid_path, s3_bucket, csv_key)
 
             t_total = time.perf_counter() - t_attempt_start
             logger.info(
@@ -515,7 +521,10 @@ def process_file(url: str, geotiff_filename: str,
 
 def run_parallel(tile_list: List[Tuple[str, str]],
                  max_workers: int = DEFAULT_WORKERS,
-                 dry_run: bool = False) -> None:
+                 dry_run: bool = False,
+                 s3_bucket: str = None,
+                 county: str = "unknown",
+                 year: str = "unknown") -> None:
     """
     Dispatch all tiles to a ProcessPoolExecutor and collect results.
 
@@ -553,7 +562,7 @@ def run_parallel(tile_list: List[Tuple[str, str]],
 
         # Submit all tiles
         future_to_tile = {
-            executor.submit(process_file, url, fname): (url, fname)
+            executor.submit(process_file, url, fname, 3, 120, s3_bucket, county, year): (url, fname)
             for url, fname in tile_list
         }
 
@@ -628,6 +637,22 @@ def run_parallel(tile_list: List[Tuple[str, str]],
         f.write("\n".join(summary_lines) + "\n")
     logger.info(f"Run summary written to: {RUN_SUMMARY_PATH}")
 
+    # ── Final S3 Uploads (Master CSV and Logs) ────────────────────────────────
+    if s3_bucket:
+        s3_client = s3_utils.get_s3_client()
+        if s3_client:
+            logger.info("Uploading master outputs to S3...")
+            # Master centroid CSV goes to the root of the centroids/county directory
+            master_key = f"centroids/{county.lower()}_{year}_centroids.csv"
+            s3_utils.upload_file(s3_client, COMBINED_CENTROID, s3_bucket, master_key)
+            
+            # Logs
+            summary_key = s3_utils.build_s3_key("logs", county, year, RUN_SUMMARY_PATH.name)
+            skip_key = s3_utils.build_s3_key("logs", county, year, SKIP_LOG_PATH.name)
+            s3_utils.upload_file(s3_client, RUN_SUMMARY_PATH, s3_bucket, summary_key)
+            if SKIP_LOG_PATH.exists():
+                s3_utils.upload_file(s3_client, SKIP_LOG_PATH, s3_bucket, skip_key)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 5 — CLI Entry Point
@@ -654,12 +679,16 @@ def _parse_args() -> argparse.Namespace:
         help="Skip superceded tiles (VComment contains 'Replaced')"
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Print the tile list without downloading or processing"
+        "--year", default="unknown",
+        help="Collection year to filter and use for S3 paths (e.g. '2015')"
     )
     parser.add_argument(
-        "--year", default=None,
-        help="Collection year to filter (e.g. '2015'). Used to name output directories."
+        "--s3-upload", action="store_true",
+        help="Upload outputs to AWS S3 bucket (central-virginia-tree-canopy-project)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Print the tile list without downloading or processing"
     )
     return parser.parse_args()
 
@@ -668,13 +697,10 @@ if __name__ == "__main__":
     # Required on macOS and Windows to prevent recursive subprocess spawning
     multiprocessing.freeze_support()
 
+    # Update global output paths to be year-aware
+    #global GEOTIFF_OUTPUT_DIR, CENTROID_OUTPUT_DIR, COMBINED_CENTROID
+
     args = _parse_args()
-
-    year_tag = args.year or "unknown_year"
-    county_tag = (args.county or "all").lower()
-
-    GEOTIFF_OUTPUT_DIR   = Path(f"../data/outputs/GeoTIFF_files/{county_tag}_{year_tag}/")
-    COMBINED_CENTROID    = Path(f"../data/outputs/{county_tag}_{year_tag}_centroids.csv")
 
     tile_list = load_tile_list(
         csv_path=args.csv,
@@ -686,8 +712,20 @@ if __name__ == "__main__":
         logger.error("No tiles found matching the specified filters. Exiting.")
         sys.exit(1)
 
+    s3_bucket = "central-virginia-tree-canopy-project" if args.s3_upload else None
+    
+    county_tag = (args.county or "all").lower()
+    year_tag = args.year
+
+    GEOTIFF_OUTPUT_DIR = Path(f"/home/thq3hn/development/DS6015-006/data/outputs/GeoTIFF_files/{county_tag}_{year_tag}/")
+    CENTROID_OUTPUT_DIR = Path(f"/home/thq3hn/development/DS6015-006/data/outputs/centroids/{county_tag}_{year_tag}/")
+    COMBINED_CENTROID = Path(f"/home/thq3hn/development/DS6015-006/data/outputs/{county_tag}_{year_tag}_centroids.csv")
+
     run_parallel(
         tile_list=tile_list,
         max_workers=args.workers,
         dry_run=args.dry_run,
+        s3_bucket=s3_bucket,
+        county=args.county or "all",
+        year=args.year
     )
