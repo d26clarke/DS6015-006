@@ -48,6 +48,8 @@ module load awscli
 
 pip install rasterio proj tqdm
 pip install awscli boto3
+pip install earthaccess h5py
+pip install pandas s3fs h5py numpy
 pip install "laspy[laszip]"
 
 echo "  Python: $(which python)"

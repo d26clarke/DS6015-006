@@ -1,0 +1,15 @@
+{
+    "pipeline": [
+        {
+            "type": "readers.ept",
+            "filename": "https://s3-us-west-2.amazonaws.com/usgs-lidar-public/VA_NShenandoah_1_2020/ept.json",
+            "bounds": "([-8741219, -8732602], [4580782, 4589390])"
+        },
+        {
+            "type": "writers.las",
+            "filename": "/scratch/thq3hn/lidar_tmp/charlottesville_2020_allclass-v2.laz",
+            "compression": "laszip",
+            "extra_dims": "all"
+        }
+    ]
+}
